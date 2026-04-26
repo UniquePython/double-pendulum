@@ -1,6 +1,6 @@
 CC      = gcc
 CFLAGS  = -Wall -Wextra -Wshadow -Wdouble-promotion -Wformat=2 -Wundef -Wconversion -std=c11 -I include
-LIBS    =
+LIBS    = -lraylib -lGL -lm -lpthread -ldl -lrt -lX11
 
 SRC_DIR   = src
 BUILD_DIR = build

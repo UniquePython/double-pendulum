@@ -10,7 +10,7 @@ int main(void)
     InitWindow(WIDTH, HEIGHT, "Double Pendulum");
     SetTargetFPS(GetMonitorRefreshRate(GetCurrentMonitor()));
 
-    while (!WindowShouldClose)
+    while (!WindowShouldClose())
     {
         BeginDrawing();
 
