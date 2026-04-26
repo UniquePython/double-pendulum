@@ -159,10 +159,10 @@ void ResetSimulation(State *state, Vector2 trail[TRAIL_LEN], int *trailIndex)
     SetRandomSeed(time(NULL));
 
     state->angle1 = DEG(GetRandomValue(-90, 90));
-    state->angle2 = DEG(GetRandomValue(-120, 120));
+    state->angle2 = DEG(GetRandomValue(-180, 180));
 
     state->angularVel1 = 0.0f;
-    state->angularVel2 = 0.001f;
+    state->angularVel2 = 0.0f;
 
     memset(trail, 0, sizeof(Vector2) * TRAIL_LEN);
     *trailIndex = 0;
