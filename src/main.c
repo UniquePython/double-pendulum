@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <math.h>
+#include <string.h>
 
 #include <raylib.h>
 
@@ -8,14 +9,17 @@
 
 #define TIME_SCALE 10.0f
 
+#define TRAIL_LEN 500
+#define TRAIL_THICKNESS 2
+
 #define STRING_THICKNESS 4
 #define MASS_RADIUS 15
 
-#define L1 250
-#define L2 200
+#define L1 240
+#define L2 120
 
 #define M1 1
-#define M2 1
+#define M2 2
 
 #define DEG(deg) ((float)(deg) * DEG2RAD)
 
@@ -45,6 +49,17 @@ void DrawDoublePendulum(Vector2 startPos, float angle1, float angle2, float leng
     DrawPendulum(startPos, angle1, length1);
 }
 
+void DrawTrail(Vector2 trail[TRAIL_LEN], int trailIndex)
+{
+    for (int i = 0; i < TRAIL_LEN; i++)
+    {
+        int idx = (trailIndex + i) % TRAIL_LEN;
+        float t = (float)i / TRAIL_LEN;
+        Color c = Fade(RED, t);
+        DrawCircleV(trail[idx], TRAIL_THICKNESS, c);
+    }
+}
+
 typedef struct
 {
     float angle1, angle2;
@@ -56,6 +71,15 @@ typedef struct
     float dAngle1, dAngle2;
     float dAngularVel1, dAngularVel2;
 } Derivative;
+
+void UpdateTrail(Vector2 trail[TRAIL_LEN], int *trailIndex, Vector2 startPos, float angle1, float angle2, float length1, float length2)
+{
+    Vector2 midPos = GetEndPos(startPos, angle1, length1);
+    Vector2 endPos = GetEndPos(midPos, angle2, length2);
+
+    trail[*trailIndex] = endPos;
+    *trailIndex = (*trailIndex + 1) % TRAIL_LEN;
+}
 
 Derivative ComputeDerivatives(float length1, float length2, float mass1, float mass2, State s)
 {
@@ -134,6 +158,10 @@ int main(void)
     InitWindow(WIDTH, HEIGHT, "Double Pendulum");
     SetTargetFPS(GetMonitorRefreshRate(GetCurrentMonitor()));
 
+    Vector2 trail[TRAIL_LEN];
+    memset(trail, 0, sizeof(trail));
+    int trailIndex = 0;
+
     Vector2 startPos = (Vector2){WIDTH / 2, 0};
 
     float length1, length2, mass1, mass2;
@@ -147,7 +175,7 @@ int main(void)
     State state;
 
     state.angle1 = DEG(GetRandomValue(-90, 90));
-    state.angle2 = DEG(GetRandomValue(-90, 90));
+    state.angle2 = DEG(GetRandomValue(-120, 120));
 
     state.angularVel1 = 0;
     state.angularVel2 = 0;
@@ -164,9 +192,14 @@ int main(void)
             frameDt -= step;
         }
 
+        UpdateTrail(trail, &trailIndex, startPos, state.angle1, state.angle2, length1, length2);
+
         BeginDrawing();
         ClearBackground(BLACK);
+
+        DrawTrail(trail, trailIndex);
         DrawDoublePendulum(startPos, state.angle1, state.angle2, length1, length2);
+
         EndDrawing();
     }
 
