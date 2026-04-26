@@ -22,44 +22,72 @@
 #define M1 1
 #define M2 2
 
-#define DEG(deg) ((float)(deg) * DEG2RAD)
+#define TO_RAD(deg) ((float)(deg) * DEG2RAD)
 
-#define g 9.8f
+#define G_ACCEL 9.8f
+
+// ─── Geometry ────────────────────────────────────────────────────────────────
+//
+// Coordinate convention: angle = 0 is straight down, positive Y is screen-down.
 
 Vector2 GetEndPos(Vector2 startPos, float angle, float length)
 {
     return (Vector2){startPos.x + length * sinf(angle), startPos.y + length * cosf(angle)};
 }
 
-void DrawPendulum(Vector2 startPos, float angle, float length)
+// ─── Config ───────────────────────────────────────────────────────────────────
+
+typedef struct
+{
+    float length1, length2;
+    float mass1, mass2;
+} PendulumConfig;
+
+// ─── Drawing ──────────────────────────────────────────────────────────────────
+
+static Color s_trailColors[TRAIL_LEN];
+
+void InitTrailColors(void)
+{
+    for (int i = 0; i < TRAIL_LEN; i++)
+    {
+        float t = (float)i / TRAIL_LEN;
+        s_trailColors[i] = Fade(RED, t);
+    }
+}
+
+void DrawPendulumArm(Vector2 startPos, float angle, float length)
 {
     Vector2 endPos = GetEndPos(startPos, angle, length);
-
     DrawLineEx(startPos, endPos, STRING_THICKNESS, RAYWHITE);
     DrawCircleV(endPos, MASS_RADIUS, RED);
 }
 
-void DrawDoublePendulum(Vector2 startPos, float angle1, float angle2, float length1, float length2)
+void DrawDoublePendulum(Vector2 pivotPos, float angle1, float angle2, float length1, float length2)
 {
-    // Draw second pendulum first
-    Vector2 midPos = GetEndPos(startPos, angle1, length1);
-
-    DrawPendulum(midPos, angle2, length2);
-
-    // Draw first pendulum after second (in order to not draw over mass)
-    DrawPendulum(startPos, angle1, length1);
+    Vector2 midPos = GetEndPos(pivotPos, angle1, length1);
+    // Draw second arm first so the first arm's mass is drawn on top
+    DrawPendulumArm(midPos, angle2, length2);
+    DrawPendulumArm(pivotPos, angle1, length1);
 }
 
-void DrawTrail(Vector2 trail[TRAIL_LEN], int trailIndex)
+void DrawTrail(Vector2 points[TRAIL_LEN], int index)
 {
     for (int i = 0; i < TRAIL_LEN; i++)
     {
-        int idx = (trailIndex + i) % TRAIL_LEN;
-        float t = (float)i / TRAIL_LEN;
-        Color c = Fade(RED, t);
-        DrawCircleV(trail[idx], TRAIL_THICKNESS, c);
+        int idx = (index + i) % TRAIL_LEN;
+        DrawCircleV(points[idx], TRAIL_THICKNESS, s_trailColors[i]);
     }
 }
+
+void DrawControls(bool paused)
+{
+    DrawText("SPACE: Reset  |  P: Pause", 10, HEIGHT - 24, 16, GRAY);
+    if (paused)
+        DrawText("PAUSED", WIDTH / 2 - 36, HEIGHT / 2, 24, YELLOW);
+}
+
+// ─── Physics ──────────────────────────────────────────────────────────────────
 
 typedef struct
 {
@@ -73,161 +101,174 @@ typedef struct
     float dAngularVel1, dAngularVel2;
 } Derivative;
 
-void UpdateTrail(Vector2 trail[TRAIL_LEN], int *trailIndex, Vector2 startPos, float angle1, float angle2, float length1, float length2)
-{
-    Vector2 midPos = GetEndPos(startPos, angle1, length1);
-    Vector2 endPos = GetEndPos(midPos, angle2, length2);
-
-    trail[*trailIndex] = endPos;
-    *trailIndex = (*trailIndex + 1) % TRAIL_LEN;
-}
-
-Derivative ComputeDerivatives(float length1, float length2, float mass1, float mass2, State s)
+Derivative ComputeDerivatives(PendulumConfig cfg, State s)
 {
     float delta = s.angle1 - s.angle2;
-
     float sinDelta = sinf(delta);
     float cosDelta = cosf(delta);
 
-    // Acceleration 1
-    float gravityTerm1 = -g * (2 * mass1 + mass2) * sinf(s.angle1);
-    float gravityTerm2 = -mass2 * g * sinf(s.angle1 - 2 * s.angle2);
+    // ── Angular acceleration of arm 1 ──
+    float gt1 = -G_ACCEL * (2 * cfg.mass1 + cfg.mass2) * sinf(s.angle1);
+    float gt2 = -cfg.mass2 * G_ACCEL * sinf(s.angle1 - 2 * s.angle2);
+    float vt1 = -2 * cfg.mass2 * sinDelta * (s.angularVel2 * s.angularVel2 * cfg.length2 + s.angularVel1 * s.angularVel1 * cfg.length1 * cosDelta);
 
-    float velocityTerm1 = -2 * mass2 * sinDelta * (s.angularVel2 * s.angularVel2 * length2 + s.angularVel1 * s.angularVel1 * length1 * cosDelta);
+    float den1 = cfg.length1 * (2 * cfg.mass1 + cfg.mass2 - cfg.mass2 * cosf(2 * delta));
+    if (fabsf(den1) < 1e-6f)
+        den1 = copysignf(1e-6f, den1);
 
-    float denominator1 = length1 * (2 * mass1 + mass2 - mass2 * cosf(2 * delta));
+    float angularAcc1 = (gt1 + gt2 + vt1) / den1;
 
-    float angularAcc1 = (gravityTerm1 + gravityTerm2 + velocityTerm1) / denominator1;
+    // ── Angular acceleration of arm 2 ──
+    float gt3 = (cfg.mass1 + cfg.mass2) * G_ACCEL * cosf(s.angle1);
+    float vt2 = s.angularVel1 * s.angularVel1 * cfg.length1 * (cfg.mass1 + cfg.mass2) + s.angularVel2 * s.angularVel2 * cfg.length2 * cfg.mass2 * cosDelta;
+    float num2 = 2 * sinDelta * (vt2 + gt3);
 
-    // Acceleration 2
-    float gravityTerm3 = (mass1 + mass2) * g * cosf(s.angle1);
+    float den2 = cfg.length2 * (2 * cfg.mass1 + cfg.mass2 - cfg.mass2 * cosf(2 * delta));
+    if (fabsf(den2) < 1e-6f)
+        den2 = copysignf(1e-6f, den2);
 
-    float velocityTerm2 = s.angularVel1 * s.angularVel1 * length1 * (mass1 + mass2) + s.angularVel2 * s.angularVel2 * length2 * mass2 * cosDelta;
+    float angularAcc2 = num2 / den2;
 
-    float numerator2 = 2 * sinDelta * (velocityTerm2 + gravityTerm3);
-
-    float denominator2 = length2 * (2 * mass1 + mass2 - mass2 * cosf(2 * delta));
-
-    float angularAcc2 = numerator2 / denominator2;
-
-    Derivative d;
-
-    d.dAngle1 = s.angularVel1;
-    d.dAngle2 = s.angularVel2;
-
-    d.dAngularVel1 = angularAcc1;
-    d.dAngularVel2 = angularAcc2;
-
-    return d;
+    return (Derivative){
+        .dAngle1 = s.angularVel1,
+        .dAngle2 = s.angularVel2,
+        .dAngularVel1 = angularAcc1,
+        .dAngularVel2 = angularAcc2,
+    };
 }
 
 State AddState(State s, Derivative d, float dt)
 {
-    State result;
-
-    result.angle1 = s.angle1 + d.dAngle1 * dt;
-    result.angle2 = s.angle2 + d.dAngle2 * dt;
-    result.angularVel1 = s.angularVel1 + d.dAngularVel1 * dt;
-    result.angularVel2 = s.angularVel2 + d.dAngularVel2 * dt;
-
-    return result;
+    return (State){
+        .angle1 = s.angle1 + d.dAngle1 * dt,
+        .angle2 = s.angle2 + d.dAngle2 * dt,
+        .angularVel1 = s.angularVel1 + d.dAngularVel1 * dt,
+        .angularVel2 = s.angularVel2 + d.dAngularVel2 * dt,
+    };
 }
 
-State RK4Step(State s, float dt, float length1, float length2, float mass1, float mass2)
+State RK4Step(State s, float dt, PendulumConfig cfg)
 {
-    Derivative k1 = ComputeDerivatives(length1, length2, mass1, mass2, s);
+    Derivative k1 = ComputeDerivatives(cfg, s);
+    Derivative k2 = ComputeDerivatives(cfg, AddState(s, k1, dt * 0.5f));
+    Derivative k3 = ComputeDerivatives(cfg, AddState(s, k2, dt * 0.5f));
+    Derivative k4 = ComputeDerivatives(cfg, AddState(s, k3, dt));
 
-    Derivative k2 = ComputeDerivatives(length1, length2, mass1, mass2, AddState(s, k1, dt * 0.5f));
-
-    Derivative k3 = ComputeDerivatives(length1, length2, mass1, mass2, AddState(s, k2, dt * 0.5f));
-
-    Derivative k4 = ComputeDerivatives(length1, length2, mass1, mass2, AddState(s, k3, dt));
-
-    State result;
-
-    result.angle1 = s.angle1 + (dt / 6.0f) * (k1.dAngle1 + 2 * k2.dAngle1 + 2 * k3.dAngle1 + k4.dAngle1);
-    result.angle2 = s.angle2 + (dt / 6.0f) * (k1.dAngle2 + 2 * k2.dAngle2 + 2 * k3.dAngle2 + k4.dAngle2);
-
-    result.angularVel1 = s.angularVel1 + (dt / 6.0f) * (k1.dAngularVel1 + 2 * k2.dAngularVel1 + 2 * k3.dAngularVel1 + k4.dAngularVel1);
-    result.angularVel2 = s.angularVel2 + (dt / 6.0f) * (k1.dAngularVel2 + 2 * k2.dAngularVel2 + 2 * k3.dAngularVel2 + k4.dAngularVel2);
-
-    return result;
+    return (State){
+        .angle1 = s.angle1 + (dt / 6.0f) * (k1.dAngle1 + 2 * k2.dAngle1 + 2 * k3.dAngle1 + k4.dAngle1),
+        .angle2 = s.angle2 + (dt / 6.0f) * (k1.dAngle2 + 2 * k2.dAngle2 + 2 * k3.dAngle2 + k4.dAngle2),
+        .angularVel1 = s.angularVel1 + (dt / 6.0f) * (k1.dAngularVel1 + 2 * k2.dAngularVel1 + 2 * k3.dAngularVel1 + k4.dAngularVel1),
+        .angularVel2 = s.angularVel2 + (dt / 6.0f) * (k1.dAngularVel2 + 2 * k2.dAngularVel2 + 2 * k3.dAngularVel2 + k4.dAngularVel2),
+    };
 }
 
-void ResetSimulation(State *state, Vector2 trail[TRAIL_LEN], int *trailIndex)
+// ─── Trail ────────────────────────────────────────────────────────────────────
+
+typedef struct
+{
+    Vector2 points[TRAIL_LEN];
+    int index;
+} Trail;
+
+void ResetTrail(Trail *trail)
+{
+    memset(trail->points, 0, sizeof(trail->points));
+    trail->index = 0;
+}
+
+void UpdateTrail(Trail *trail, Vector2 pivotPos, State state, PendulumConfig cfg)
+{
+    Vector2 midPos = GetEndPos(pivotPos, state.angle1, cfg.length1);
+    Vector2 endPos = GetEndPos(midPos, state.angle2, cfg.length2);
+    trail->points[trail->index] = endPos;
+    trail->index = (trail->index + 1) % TRAIL_LEN;
+}
+
+// ─── Simulation ───────────────────────────────────────────────────────────────
+
+typedef struct
+{
+    State state;
+    Trail trail;
+    bool paused;
+} Simulation;
+
+void ResetSimulation(Simulation *sim)
 {
     SetRandomSeed(time(NULL));
 
-    state->angle1 = DEG(GetRandomValue(-90, 90));
-    state->angle2 = DEG(GetRandomValue(-180, 180));
+    sim->state.angle1 = TO_RAD(GetRandomValue(-90, 90));
+    sim->state.angle2 = TO_RAD(GetRandomValue(-180, 180));
+    sim->state.angularVel1 = 0.0f;
+    sim->state.angularVel2 = 0.0f;
 
-    state->angularVel1 = 0.0f;
-    state->angularVel2 = 0.0f;
-
-    memset(trail, 0, sizeof(Vector2) * TRAIL_LEN);
-    *trailIndex = 0;
+    ResetTrail(&sim->trail);
+    sim->paused = false;
 }
 
-void StepFrame(State *state, float length1, float length2, float mass1, float mass2)
+void StepSimulation(Simulation *sim, PendulumConfig cfg)
 {
+    if (sim->paused)
+        return;
+
     float frameDt = GetFrameTime() * TIME_SCALE;
-    float maxDt = 0.006944f;
+
+    // Cap individual step size for integrator stability
+    const float maxDt = 1.0f / (float)GetMonitorRefreshRate(GetCurrentMonitor());
 
     while (frameDt > 0.0f)
     {
-        float step = frameDt > maxDt ? maxDt : frameDt;
-        *state = RK4Step(*state, step, length1, length2, mass1, mass2);
+        float step = (frameDt > maxDt) ? maxDt : frameDt;
+        sim->state = RK4Step(sim->state, step, cfg);
         frameDt -= step;
     }
 }
 
-void HandleInput(State *state, Vector2 trail[TRAIL_LEN], int *trailIndex)
+void HandleInput(Simulation *sim)
 {
     if (IsKeyPressed(KEY_SPACE))
-        ResetSimulation(state, trail, trailIndex);
+        ResetSimulation(sim);
+    if (IsKeyPressed(KEY_P))
+        sim->paused = !sim->paused;
 }
+
+// ─── Entry point ──────────────────────────────────────────────────────────────
 
 int main(void)
 {
     InitWindow(WIDTH, HEIGHT, "Double Pendulum");
     SetTargetFPS(GetMonitorRefreshRate(GetCurrentMonitor()));
 
-    Vector2 trail[TRAIL_LEN];
-    memset(trail, 0, sizeof(trail));
-    int trailIndex = 0;
+    InitTrailColors();
 
-    Vector2 startPos = (Vector2){WIDTH / 2, 0};
+    const Vector2 pivotPos = {WIDTH / 2.0f, 0};
 
-    float length1, length2, mass1, mass2;
+    const PendulumConfig cfg = {
+        .length1 = L1,
+        .length2 = L2,
+        .mass1 = M1,
+        .mass2 = M2,
+    };
 
-    length1 = L1;
-    length2 = L2;
-
-    mass1 = M1;
-    mass2 = M2;
-
-    State state;
-
-    ResetSimulation(&state, trail, &trailIndex);
+    Simulation sim;
+    ResetSimulation(&sim);
 
     while (!WindowShouldClose())
     {
-        HandleInput(&state, trail, &trailIndex);
+        HandleInput(&sim);
 
-        StepFrame(&state, length1, length2, mass1, mass2);
-
-        UpdateTrail(trail, &trailIndex, startPos, state.angle1, state.angle2, length1, length2);
+        StepSimulation(&sim, cfg);
+        if (!sim.paused)
+            UpdateTrail(&sim.trail, pivotPos, sim.state, cfg);
 
         BeginDrawing();
         ClearBackground(BLACK);
-
-        DrawTrail(trail, trailIndex);
-        DrawDoublePendulum(startPos, state.angle1, state.angle2, length1, length2);
-
+        DrawTrail(sim.trail.points, sim.trail.index);
+        DrawDoublePendulum(pivotPos, sim.state.angle1, sim.state.angle2, cfg.length1, cfg.length2);
+        DrawControls(sim.paused);
         EndDrawing();
     }
 
     CloseWindow();
-
     return 0;
 }
