@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <string.h>
+#include <time.h>
 
 #include <raylib.h>
 
@@ -155,6 +156,8 @@ State RK4Step(State s, float dt, float length1, float length2, float mass1, floa
 
 void ResetSimulation(State *state, Vector2 trail[TRAIL_LEN], int *trailIndex)
 {
+    SetRandomSeed(time(NULL));
+
     state->angle1 = DEG(GetRandomValue(-90, 90));
     state->angle2 = DEG(GetRandomValue(-120, 120));
 
