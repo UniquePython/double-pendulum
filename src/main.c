@@ -153,6 +153,18 @@ State RK4Step(State s, float dt, float length1, float length2, float mass1, floa
     return result;
 }
 
+void ResetSimulation(State *state, Vector2 trail[TRAIL_LEN], int *trailIndex)
+{
+    state->angle1 = DEG(GetRandomValue(-90, 90));
+    state->angle2 = DEG(GetRandomValue(-120, 120));
+
+    state->angularVel1 = 0.0f;
+    state->angularVel2 = 0.001f;
+
+    memset(trail, 0, sizeof(Vector2) * TRAIL_LEN);
+    *trailIndex = 0;
+}
+
 int main(void)
 {
     InitWindow(WIDTH, HEIGHT, "Double Pendulum");
@@ -174,11 +186,7 @@ int main(void)
 
     State state;
 
-    state.angle1 = DEG(GetRandomValue(-90, 90));
-    state.angle2 = DEG(GetRandomValue(-120, 120));
-
-    state.angularVel1 = 0;
-    state.angularVel2 = 0;
+    ResetSimulation(&state, trail, &trailIndex);
 
     while (!WindowShouldClose())
     {
@@ -187,6 +195,9 @@ int main(void)
 
         while (frameDt > 0.0f)
         {
+            if (IsKeyPressed(KEY_SPACE))
+                ResetSimulation(&state, trail, &trailIndex);
+
             float step = frameDt > maxDt ? maxDt : frameDt;
             state = RK4Step(state, step, length1, length2, mass1, mass2);
             frameDt -= step;
