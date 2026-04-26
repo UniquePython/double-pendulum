@@ -165,6 +165,25 @@ void ResetSimulation(State *state, Vector2 trail[TRAIL_LEN], int *trailIndex)
     *trailIndex = 0;
 }
 
+void StepFrame(State *state, float length1, float length2, float mass1, float mass2)
+{
+    float frameDt = GetFrameTime() * TIME_SCALE;
+    float maxDt = 0.006944f;
+
+    while (frameDt > 0.0f)
+    {
+        float step = frameDt > maxDt ? maxDt : frameDt;
+        *state = RK4Step(*state, step, length1, length2, mass1, mass2);
+        frameDt -= step;
+    }
+}
+
+void HandleInput(State *state, Vector2 trail[TRAIL_LEN], int *trailIndex)
+{
+    if (IsKeyPressed(KEY_SPACE))
+        ResetSimulation(state, trail, trailIndex);
+}
+
 int main(void)
 {
     InitWindow(WIDTH, HEIGHT, "Double Pendulum");
@@ -190,18 +209,9 @@ int main(void)
 
     while (!WindowShouldClose())
     {
-        float frameDt = GetFrameTime() * TIME_SCALE;
-        float maxDt = 0.006944f;
+        HandleInput(&state, trail, &trailIndex);
 
-        while (frameDt > 0.0f)
-        {
-            if (IsKeyPressed(KEY_SPACE))
-                ResetSimulation(&state, trail, &trailIndex);
-
-            float step = frameDt > maxDt ? maxDt : frameDt;
-            state = RK4Step(state, step, length1, length2, mass1, mass2);
-            frameDt -= step;
-        }
+        StepFrame(&state, length1, length2, mass1, mass2);
 
         UpdateTrail(trail, &trailIndex, startPos, state.angle1, state.angle2, length1, length2);
 
