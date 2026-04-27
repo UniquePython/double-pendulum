@@ -5,8 +5,14 @@
 
 #include <raylib.h>
 
+#define RAYGUI_IMPLEMENTATION
+#include "raygui.h"
+
 #define WIDTH 900
 #define HEIGHT 600
+
+#define PANEL_X 750
+#define PANEL_WIDTH (WIDTH - PANEL_X)
 
 #define TIME_SCALE 10.0f
 
@@ -42,6 +48,17 @@ typedef struct
     float length1, length2;
     float mass1, mass2;
 } PendulumConfig;
+
+typedef struct
+{
+    float length1, length2;
+    float mass1, mass2;
+} SimParams;
+
+PendulumConfig ConfigFromParams(SimParams p)
+{
+    return (PendulumConfig){p.length1, p.length2, p.mass1, p.mass2};
+}
 
 // ─── Drawing ──────────────────────────────────────────────────────────────────
 
@@ -84,7 +101,67 @@ void DrawControls(bool paused)
 {
     DrawText("SPACE: Reset  |  P: Pause", 10, HEIGHT - 24, 16, GRAY);
     if (paused)
-        DrawText("PAUSED", WIDTH / 2 - 36, HEIGHT / 2, 24, YELLOW);
+        DrawText("PAUSED", PANEL_X / 2 - 36, HEIGHT / 2, 24, YELLOW);
+}
+
+// Returns true if a value changed (caller should reset the simulation).
+bool DrawParamsPanel(SimParams *p)
+{
+    bool changed = false;
+
+    DrawRectangle(PANEL_X, 0, PANEL_WIDTH, HEIGHT, (Color){20, 20, 20, 128});
+    DrawLine(PANEL_X, 0, PANEL_X, HEIGHT, DARKGRAY);
+
+    GuiSetStyle(DEFAULT, TEXT_SIZE, 14);
+
+    int x = PANEL_X + 10;
+    int w = PANEL_WIDTH - 20;
+    int y = 20;
+    int dy = 70;
+
+    DrawText("Parameters", x, y, 16, RAYWHITE);
+    y += 30;
+
+    // Labels are drawn manually above each slider so they stay within the
+    // panel. GuiSliderBar's built-in left/right labels render outside the
+    // rectangle bounds and overflow at both edges, so we pass "" for both.
+
+    DrawText("Arm lengths", x, y, 13, GRAY);
+    y += 40;
+
+    float prev;
+
+    DrawText(TextFormat("L1: %.0f", p->length1), x, y - 16, 13, RAYWHITE);
+    prev = p->length1;
+    GuiSliderBar((Rectangle){x, y, w, 20}, "", "", &p->length1, 50, 350);
+    if (p->length1 != prev)
+        changed = true;
+    y += dy;
+
+    DrawText(TextFormat("L2: %.0f", p->length2), x, y - 16, 13, RAYWHITE);
+    prev = p->length2;
+    GuiSliderBar((Rectangle){x, y, w, 20}, "", "", &p->length2, 50, 350);
+    if (p->length2 != prev)
+        changed = true;
+    y += dy;
+
+    DrawText("Masses", x, y, 13, GRAY);
+    y += 40;
+
+    DrawText(TextFormat("M1: %.2f", p->mass1), x, y - 16, 13, RAYWHITE);
+    prev = p->mass1;
+    GuiSliderBar((Rectangle){x, y, w, 20}, "", "", &p->mass1, 0.1f, 5.0f);
+    if (p->mass1 != prev)
+        changed = true;
+    y += dy;
+
+    DrawText(TextFormat("M2: %.2f", p->mass2), x, y - 16, 13, RAYWHITE);
+    prev = p->mass2;
+    GuiSliderBar((Rectangle){x, y, w, 20}, "", "", &p->mass2, 0.1f, 5.0f);
+    if (p->mass2 != prev)
+        changed = true;
+
+    return changed;
 }
 
 // ─── Physics ──────────────────────────────────────────────────────────────────
@@ -206,15 +283,12 @@ void ResetSimulation(Simulation *sim)
     sim->paused = false;
 }
 
-void StepSimulation(Simulation *sim, PendulumConfig cfg)
+void StepSimulation(Simulation *sim, PendulumConfig cfg, float maxDt)
 {
     if (sim->paused)
         return;
 
     float frameDt = GetFrameTime() * TIME_SCALE;
-
-    // Cap individual step size for integrator stability
-    const float maxDt = 1.0f / (float)GetMonitorRefreshRate(GetCurrentMonitor());
 
     while (frameDt > 0.0f)
     {
@@ -237,13 +311,19 @@ void HandleInput(Simulation *sim)
 int main(void)
 {
     InitWindow(WIDTH, HEIGHT, "Double Pendulum");
-    SetTargetFPS(GetMonitorRefreshRate(GetCurrentMonitor()));
+
+    int refreshRate = GetMonitorRefreshRate(GetCurrentMonitor());
+    if (refreshRate <= 0)
+        refreshRate = 60; // fallback if query fails
+    SetTargetFPS(refreshRate);
+    const float maxDt = 1.0f / (float)refreshRate;
 
     InitTrailColors();
 
-    const Vector2 pivotPos = {WIDTH / 2.0f, 0};
+    // Pivot centred in the simulation area (left of the panel)
+    const Vector2 pivotPos = {PANEL_X / 2.0f, 0.0f};
 
-    const PendulumConfig cfg = {
+    SimParams params = {
         .length1 = L1,
         .length2 = L2,
         .mass1 = M1,
@@ -257,7 +337,9 @@ int main(void)
     {
         HandleInput(&sim);
 
-        StepSimulation(&sim, cfg);
+        PendulumConfig cfg = ConfigFromParams(params);
+
+        StepSimulation(&sim, cfg, maxDt);
         if (!sim.paused)
             UpdateTrail(&sim.trail, pivotPos, sim.state, cfg);
 
@@ -266,6 +348,9 @@ int main(void)
         DrawTrail(sim.trail.points, sim.trail.index);
         DrawDoublePendulum(pivotPos, sim.state.angle1, sim.state.angle2, cfg.length1, cfg.length2);
         DrawControls(sim.paused);
+
+        if (DrawParamsPanel(&params))
+            ResetSimulation(&sim);
         EndDrawing();
     }
 
